@@ -10,16 +10,85 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"log"
 	"os"
+	"strings"
 
 	"tcli/config"
 	treq "tcli/trello"
+	"tcli/trello/ops"
 	"tcli/trello/types"
+
+	"github.com/AlecAivazis/survey/v2"
 )
 
+type TrelloPath struct {
+	workspace types.Organization
+	board     types.Board
+	card      string
+}
+
+func (p *TrelloPath) GetPath() string {
+	var path []string
+	if (types.Organization{}) != p.workspace {
+		path = append(path, p.workspace.DisplayName)
+	}
+	if (types.Board{}) != p.board {
+		path = append(path, p.board.Name)
+	}
+	if p.card != "" {
+		path = append(path, p.card)
+	}
+	return strings.Join(path, "/")
+}
+
+func (p *TrelloPath) HasWorkspace() bool {
+	return (types.Organization{}) != p.workspace
+}
+
+func (p *TrelloPath) HasBoard() bool {
+	return (types.Board{}) != p.board
+}
+
+func (p *TrelloPath) HasCard() bool {
+	return p.card != ""
+}
+
+var CmdsAvailable = []string{
+	"help",
+	"exit",
+	"workspace",
+	"board",
+}
+
+func CmdSuggestions(toComplete string) []string {
+
+	log.Printf("cmd suggestions > input: %s\n", toComplete)
+
+	if len(toComplete) == 0 {
+		return CmdsAvailable
+	}
+	candidates := []string{}
+	for _, cmd := range CmdsAvailable {
+		if strings.Contains(cmd, toComplete) {
+			candidates = append(candidates, cmd)
+		}
+	}
+	return candidates
+}
+
 func main() {
+
+	logFile, err := os.OpenFile(
+		"tcli.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666,
+	)
+	if err != nil {
+		log.Fatalf("error opening log file: %v", err)
+	}
+	defer logFile.Close()
+	log.SetOutput(logFile)
+	log.Println("test log")
 
 	config, err := config.ReadConfig()
 	if err != nil {
@@ -30,20 +99,81 @@ func main() {
 
 	trello := treq.Trello(config.ID, config.Key, config.Token)
 
-	// fmt.Println("--- Organizations ---")
-	orgsEndpoint := treq.MakeEndpoint(
-		fmt.Sprintf("/members/%s/organizations", config.ID),
-		[]string{"id", "name", "displayName"},
-	)
-	orgsRaw, err := trello.ApiGet(orgsEndpoint)
-	if err != nil {
-		fmt.Printf("error obtaining orgs: %s\n", err)
-		os.Exit(1)
+	path := new(TrelloPath)
+
+	exit := false
+	for !exit {
+		cmd := ""
+		prompt := &survey.Input{
+			Suggest: CmdSuggestions,
+		}
+		cliPath := path.GetPath()
+		cliPathStr := ""
+		if len(cliPath) > 0 {
+			cliPathStr = fmt.Sprintf(" [ %s ]", cliPath)
+		}
+		survey.AskOne(
+			prompt,
+			&cmd,
+			survey.WithIcons(func(icons *survey.IconSet) {
+				icons.Question.Text = fmt.Sprintf("tcli%s >", cliPathStr)
+			}),
+			survey.WithValidator(survey.Required),
+		)
+
+		if cmd == "exit" {
+			break
+		} else if cmd == "workspace" {
+			orgs, err := ops.GetWorkspaces(trello, config)
+			if err != nil {
+				fmt.Printf("error: unable to obtain workspaces: %s\n", err)
+				continue
+			}
+			var orgsNames []string
+			nameToOrg := map[string]types.Organization{}
+			for _, o := range orgs {
+				orgsNames = append(orgsNames, o.DisplayName)
+				nameToOrg[o.DisplayName] = o
+			}
+			prompt := &survey.Select{
+				Options: orgsNames,
+			}
+			var selectedOrg string
+			survey.AskOne(prompt, &selectedOrg)
+			fmt.Printf("selected org: %s\n", nameToOrg[selectedOrg])
+			path.workspace = nameToOrg[selectedOrg]
+
+		} else if cmd == "board" {
+			if !path.HasWorkspace() {
+				fmt.Println("error: Workspace not selected")
+				continue
+			}
+			boards, err := ops.GetBoards(trello, path.workspace)
+			if err != nil {
+				fmt.Printf(
+					"error: unable to obtain boards for %s: %s",
+					path.workspace.DisplayName,
+					err,
+				)
+				continue
+			}
+			var boardNames []string
+			nameToBoard := map[string]types.Board{}
+			for _, b := range boards {
+				boardNames = append(boardNames, b.Name)
+				nameToBoard[b.Name] = b
+			}
+			prompt := &survey.Select{Options: boardNames}
+			var selectedBoard string
+			survey.AskOne(prompt, &selectedBoard)
+			fmt.Printf("selected board: %s\n", selectedBoard)
+			board := nameToBoard[selectedBoard]
+			if board.Closed {
+				fmt.Printf("Board %s is closed", selectedBoard)
+			} else {
+				path.board = nameToBoard[selectedBoard]
+			}
+
+		}
 	}
-
-	fmt.Println(string(orgsRaw))
-
-	var orgs []types.Organization
-	json.Unmarshal(orgsRaw, &orgs)
-	fmt.Println(orgs)
 }
