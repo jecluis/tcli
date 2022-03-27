@@ -190,8 +190,10 @@ func main() {
 				continue
 			}
 			var listNames []string
+			nameToList := map[string]trello.List{}
 			for _, l := range lists {
 				listNames = append(listNames, l.Name)
+				nameToList[l.Name] = l
 			}
 			prompt := &survey.Select{Options: listNames}
 			var selectedList string
@@ -204,7 +206,30 @@ func main() {
 				selectedList,
 			)
 
-			path.board.GetCards(ctx)
+			list := nameToList[selectedList]
+			cards, err := path.board.GetCards(ctx)
+			if err != nil {
+				fmt.Printf(
+					"error: unable to obtain cards for %s/%s: %s\n",
+					path.workspace.DisplayName,
+					path.board.Name,
+					err,
+				)
+			}
+
+			var cardNames []string
+			nameToCard := map[string]trello.Card{}
+			for _, card := range cards {
+				if card.ListID == list.ID {
+					nameToCard[card.Name] = card
+					cardNames = append(cardNames, card.Name)
+				}
+			}
+			prompt = &survey.Select{Options: cardNames}
+			var selectedCardName string
+			survey.AskOne(prompt, &selectedCardName)
+			selectedCard := nameToCard[selectedCardName]
+			fmt.Printf("selected %s (%s)\n", selectedCard.Name, selectedCard.ID)
 		}
 	}
 }

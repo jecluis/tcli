@@ -31,7 +31,7 @@ type List struct {
 	Board  *Board
 }
 
-func (board *Board) GetCards(ctx *TrelloCtx) ([]string, error) {
+func (board *Board) GetCards(ctx *TrelloCtx) ([]Card, error) {
 
 	endpoint := MakeEndpoint(
 		fmt.Sprintf("/boards/%s/cards", board.ID), nil,
@@ -45,9 +45,14 @@ func (board *Board) GetCards(ctx *TrelloCtx) ([]string, error) {
 		)
 		return nil, err
 	}
+	var cards []Card
+	json.Unmarshal(cardsRaw, &cards)
+	for _, c := range cards {
+		c.Board = board
+	}
 
 	log.Println(string(cardsRaw))
-	return []string{}, nil
+	return cards, nil
 }
 
 func (board *Board) GetLists(
