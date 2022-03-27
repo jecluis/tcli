@@ -16,25 +16,23 @@ import (
 	"strings"
 
 	"tcli/config"
-	treq "tcli/trello"
-	"tcli/trello/ops"
-	"tcli/trello/types"
+	"tcli/trello"
 
 	"github.com/AlecAivazis/survey/v2"
 )
 
 type TrelloPath struct {
-	workspace types.Organization
-	board     types.Board
+	workspace trello.Workspace
+	board     trello.Board
 	card      string
 }
 
 func (p *TrelloPath) GetPath() string {
 	var path []string
-	if (types.Organization{}) != p.workspace {
+	if (trello.Workspace{}) != p.workspace {
 		path = append(path, p.workspace.DisplayName)
 	}
-	if (types.Board{}) != p.board {
+	if (trello.Board{}) != p.board {
 		path = append(path, p.board.Name)
 	}
 	if p.card != "" {
@@ -44,11 +42,11 @@ func (p *TrelloPath) GetPath() string {
 }
 
 func (p *TrelloPath) HasWorkspace() bool {
-	return (types.Organization{}) != p.workspace
+	return (trello.Workspace{}) != p.workspace
 }
 
 func (p *TrelloPath) HasBoard() bool {
-	return (types.Board{}) != p.board
+	return (trello.Board{}) != p.board
 }
 
 func (p *TrelloPath) HasCard() bool {
@@ -60,6 +58,7 @@ var CmdsAvailable = []string{
 	"exit",
 	"workspace",
 	"board",
+	"ls",
 }
 
 func CmdSuggestions(toComplete string) []string {
@@ -97,7 +96,7 @@ func main() {
 	}
 	fmt.Println(config)
 
-	trello := treq.Trello(config.ID, config.Key, config.Token)
+	ctx := trello.Trello(config.ID, config.Key, config.Token)
 
 	path := new(TrelloPath)
 
@@ -124,13 +123,13 @@ func main() {
 		if cmd == "exit" {
 			break
 		} else if cmd == "workspace" {
-			orgs, err := ops.GetWorkspaces(trello, config)
+			orgs, err := trello.GetWorkspaces(ctx, config)
 			if err != nil {
 				fmt.Printf("error: unable to obtain workspaces: %s\n", err)
 				continue
 			}
 			var orgsNames []string
-			nameToOrg := map[string]types.Organization{}
+			nameToOrg := map[string]trello.Workspace{}
 			for _, o := range orgs {
 				orgsNames = append(orgsNames, o.DisplayName)
 				nameToOrg[o.DisplayName] = o
@@ -148,7 +147,7 @@ func main() {
 				fmt.Println("error: Workspace not selected")
 				continue
 			}
-			boards, err := ops.GetBoards(trello, path.workspace)
+			boards, err := path.workspace.GetBoards(ctx)
 			if err != nil {
 				fmt.Printf(
 					"error: unable to obtain boards for %s: %s",
@@ -158,7 +157,7 @@ func main() {
 				continue
 			}
 			var boardNames []string
-			nameToBoard := map[string]types.Board{}
+			nameToBoard := map[string]trello.Board{}
 			for _, b := range boards {
 				boardNames = append(boardNames, b.Name)
 				nameToBoard[b.Name] = b
@@ -174,6 +173,38 @@ func main() {
 				path.board = nameToBoard[selectedBoard]
 			}
 
+		} else if cmd == "ls" {
+			if !(path.HasWorkspace() && path.HasBoard()) {
+				fmt.Println("error: workspce and board not selected")
+				continue
+			}
+
+			lists, err := path.board.GetLists(ctx)
+			if err != nil {
+				fmt.Printf(
+					"error: unable to obtain lists for %s/%s: %s\n",
+					path.workspace.DisplayName,
+					path.board.Name,
+					err,
+				)
+				continue
+			}
+			var listNames []string
+			for _, l := range lists {
+				listNames = append(listNames, l.Name)
+			}
+			prompt := &survey.Select{Options: listNames}
+			var selectedList string
+			survey.AskOne(prompt, &selectedList)
+
+			fmt.Printf(
+				"list cards on %s/%s/%s\n",
+				path.workspace.DisplayName,
+				path.board.Name,
+				selectedList,
+			)
+
+			path.board.GetCards(ctx)
 		}
 	}
 }
